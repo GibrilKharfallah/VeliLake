@@ -17,3 +17,10 @@ def utcnow() -> datetime:
 def utc_iso() -> str:
     """Horodatage ISO 8601 en UTC (pour metadonnees JSON / Mongo)."""
     return utcnow().isoformat() + "Z"
+
+def from_epoch(epoch) -> datetime:
+    """Convertit un timestamp epoch (secondes) en datetime UTC naif.
+
+    Utilise pour le champ `lastUpdatedOther` / `last_reported` des flux GBFS.
+    """
+    return datetime.fromtimestamp(int(epoch), tz=timezone.utc).replace(tzinfo=None)
