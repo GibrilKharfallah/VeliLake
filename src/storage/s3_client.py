@@ -63,11 +63,11 @@ def ensure_bucket(bucket: str | None = None) -> None:
 
 
 def put_bytes(key: str, data: bytes, content_type: str = "application/octet-stream",
-              bucket: str | None = None) -> str:
+                bucket: str | None = None) -> str:
     """Ecrit des octets bruts. Retourne la cle S3."""
     bucket = bucket or settings.s3_bucket_raw
     get_s3_client().put_object(Bucket=bucket, Key=key, Body=data,
-                               ContentType=content_type)
+                                ContentType=content_type)
     logger.info("PUT s3://%s/%s (%d octets)", bucket, key, len(data))
     return key
 
@@ -79,7 +79,7 @@ def put_json(key: str, obj: Any, bucket: str | None = None) -> str:
 
 
 def put_text(key: str, text: str, content_type: str = "text/plain",
-             bucket: str | None = None) -> str:
+                bucket: str | None = None) -> str:
     return put_bytes(key, text.encode("utf-8"), content_type=content_type, bucket=bucket)
 
 
@@ -100,7 +100,7 @@ def get_json(key: str, bucket: str | None = None) -> Any:
 
 
 def list_objects(prefix: str = "", limit: int = 100,
-                 bucket: str | None = None) -> list[dict]:
+                    bucket: str | None = None) -> list[dict]:
     """Liste les objets sous un prefixe.
 
     Retourne une liste de dicts {key, size, last_modified}. Utilise la
@@ -120,6 +120,22 @@ def list_objects(prefix: str = "", limit: int = 100,
             if len(out) >= limit:
                 return out
     return out
+
+
+def find_latest_key(prefix: str, bucket: str | None = None) -> str | None:
+    """Retourne la cle de l'objet le plus recent sous un prefixe (ou None).
+
+    Utilise par raw_to_staging pour ne transformer que le dernier snapshot
+    ingere (Velib, meteo), plutot que de retraiter tout l'historique.
+    """
+    bucket = bucket or settings.s3_bucket_raw
+    paginator = get_s3_client().get_paginator("list_objects_v2")
+    latest = None
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            if latest is None or obj["LastModified"] > latest["LastModified"]:
+                latest = obj
+    return latest["Key"] if latest else None
 
 
 def count_objects(prefix: str = "", bucket: str | None = None) -> int:
