@@ -1,0 +1,34 @@
+# Env & secrets
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Donnees (ne pas versionner les datasets lourds ni les sorties)
+data/raw_files/*.csv
+data/**/*.parquet
+reports/performance_results.json
+
+# Airflow
+dags/__pycache__/
+logs/
+airflow.db
+airflow.cfg
+webserver_config.py
+
+# DVC (si utilise)
+/.dvc/cache
+/.dvc/tmp
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
