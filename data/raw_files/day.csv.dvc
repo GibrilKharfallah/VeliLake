@@ -1,0 +1,5 @@
+outs:
+- md5: fc9dd35812a1ee180fe17e6ef72a4121
+  size: 57569
+  hash: md5
+  path: day.csv
