@@ -9,7 +9,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
-from pymongo import ASCENDING, MongoClient
+from pymongo import ASCENDING, MongoClient, ReplaceOne
 from pymongo.collection import Collection
 
 from src.config import settings
@@ -35,7 +35,27 @@ def ensure_indexes() -> None:
     col.create_index([("timestamp", ASCENDING)])
     col.create_index([("analytics.tension_level", ASCENDING)])
     col.create_index([("analytics.is_critical", ASCENDING)])
+    col.create_index([("station_id", ASCENDING), ("timestamp", ASCENDING)],
+                        unique=True, name="uq_station_ts")
     logger.info("Index MongoDB assures sur %s", settings.mongo_collection)
+    
+    
+def upsert_documents(documents: list[dict], key_fields: list[str]) -> int:
+    """Upsert idempotent par cle metier (bulk ReplaceOne upsert=True).
+
+    Rejouer le meme snapshot remplace les documents au lieu de les dupliquer.
+    Retourne le nombre de documents crees ou remplaces.
+    """
+    if not documents:
+        return 0
+    ops = [
+        ReplaceOne({k: doc[k] for k in key_fields}, doc, upsert=True)
+        for doc in documents
+    ]
+    result = get_collection().bulk_write(ops, ordered=False)
+    n = result.upserted_count + result.modified_count
+    logger.info("upsert curated : %d documents (sur %d)", n, len(documents))
+    return n
 
 
 def insert_documents(documents: list[dict]) -> int:
