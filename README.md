@@ -42,7 +42,7 @@ La contrainte du sujet (zone raw en S3 ou Elasticsearch) est respectée avec S3/
 
 ## Structure du projet (état actuel)
 
-```
+```bash
 VeliLake/
 ├── docker-compose.yml          # LocalStack + MySQL + MongoDB (+ Airflow/API à venir)
 ├── pyproject.toml              # dépendances + packaging (uv)
@@ -311,6 +311,7 @@ Le projet n'est pas installé en éditable ou le venv n'est pas actif.
 **MySQL `Access denied for user 'root'@'localhost'` (erreur 1698 / 28000)**
 Erreur `auth_socket` : la connexion tombe sur un MySQL **installé localement** (via le socket
 Unix) au lieu du conteneur. Deux correctifs :
+
 - mettre `MYSQL_HOST=127.0.0.1` dans `.env` (force TCP) ;
 - si un MySQL système occupe déjà `127.0.0.1:3306` (`sudo ss -ltnp | grep 3306`), soit
   l'arrêter (`sudo systemctl stop mysql && sudo systemctl disable mysql`), soit remapper le
