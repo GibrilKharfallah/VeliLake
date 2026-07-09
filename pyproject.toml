@@ -29,12 +29,9 @@ dev = [
     "pytest>=8.0",
     "httpx>=0.27",                  # client de test FastAPI
 ]
-
-# Airflow n'est PAS declare ici : il tourne dans son propre conteneur avec ses
-# propres contraintes de version (constraints file officiel). Voir docker/airflow.
-
-[tool.poetry]
-package-mode = false
+tooling = [
+    "dvc[s3]>=2.1.0",
+]
 
 [build-system]
 requires = ["hatchling"]
