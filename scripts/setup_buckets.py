@@ -11,6 +11,7 @@ logger = get_logger("setup_buckets")
 
 def main() -> None:
     s3_client.ensure_bucket()  # bucket raw (defini dans settings)
+    s3_client.ensure_bucket("dvc-store")   # remote DVC (versioning du dataset UCI)git add scri 
     buckets = s3_client.get_s3_client().list_buckets().get("Buckets", [])
     logger.info("Buckets presents : %s", [b["Name"] for b in buckets])
 
