@@ -48,7 +48,7 @@ rapport à l'ensemble du réseau à l'instant t ; repli sur un z-score si le bat
 
 ## 3. Structure du projet
 
-```
+```bash
 VeliLake/
 ├── docker-compose.yml          # LocalStack + MySQL + MongoDB + Airflow
 ├── pyproject.toml              # dépendances + packaging (uv)
@@ -78,12 +78,14 @@ VeliLake/
 ## 4. Installation pas à pas
 
 ### 4.1 Cloner le dépôt
+
 ```bash
 git clone https://github.com/<votre-utilisateur>/VeliLake.git
 cd VeliLake
 ```
 
 ### 4.2 Environnement Python (uv)
+
 ```bash
 uv venv                      # crée l'environnement virtuel .venv
 source .venv/bin/activate    # active (prompt : (VeliLake))
@@ -94,19 +96,23 @@ Le package `src` est installé en éditable : lancez toujours les scripts **depu
 avec `python scripts/...`.
 
 ### 4.3 Configuration (`.env`)
+
 ```bash
 cp .env.example .env
 sed -i 's/localhost/127.0.0.1/g' .env    # force TCP (évite le socket MySQL local, cf §11)
 ```
+
 Le `.env.example` est déjà aligné sur le `docker-compose.yml` (identifiants `root`/`root`,
 base `staging`, bucket `raw`, credentials LocalStack `test`/`test`). Ces valeurs sont des
 identifiants **locaux de conteneurs**, pas des secrets. `.env` est ignoré par git.
 
 ### 4.4 Lancer les services Docker
+
 ```bash
 docker compose up -d                     # LocalStack, MySQL, MongoDB, Airflow
 docker ps                                # les conteneurs doivent être "healthy"
 ```
+
 - `dl_localstack` (4566) — S3 (zone raw)
 - `dl_mysql` (3306) — staging ; **~60 s** d'initialisation
 - `dl_mongodb` (27017) — curated
@@ -115,25 +121,32 @@ docker ps                                # les conteneurs doivent être "healthy
 > Pour ne démarrer que les bases de données (sans Airflow) : `docker compose up -d localstack mysql mongodb`.
 
 ### 4.5 Initialiser buckets et schéma
+
 ```bash
 python scripts/setup_buckets.py   # crée le bucket S3 "raw"
 python scripts/init_mysql.py      # crée les 4 tables MySQL + les index MongoDB
 ```
+
 La sortie de `init_mysql.py` doit lister les 4 tables à **0 ligne**.
 
 ### 4.6 (Optionnel) Dataset UCI + DVC
+
 Le pipeline fonctionne sans le CSV (les APIs suffisent), mais pour la source *fichier* :
+
 ```bash
 cd data/raw_files
 curl -L -o bike.zip "https://archive.ics.uci.edu/static/public/275/bike+sharing+dataset.zip"
 unzip bike.zip && rm bike.zip     # -> hour.csv, day.csv, Readme.txt
 cd ../..
 ```
+
 **Versionnement du dataset avec DVC** (optionnel) :
+
 ```bash
 uv tool install "dvc[s3]"
 dvc pull            # si le dépôt contient déjà les .dvc et un remote configuré
 ```
+
 DVC ne versionne que le **fichier statique** UCI ; les zones staging/curated sont des bases
 de données (état non-fichier), gérées par Airflow. Choix assumé : un seul orchestrateur.
 
@@ -145,6 +158,7 @@ Deux voies équivalentes. **La voie B (Airflow) est celle demandée par le sujet
 sert au développement et au débogage.
 
 ### Voie A — manuelle (scripts)
+
 ```bash
 python scripts/run_ingestion_once.py            # sources -> raw (S3)
 python -m src.transformation.raw_to_staging     # raw -> staging (MySQL)
@@ -152,19 +166,23 @@ python -m src.transformation.staging_to_curated # staging -> curated (MongoDB)
 ```
 
 ### Voie B — orchestrée (Airflow)
+
 Le DAG `smart_mobility_data_lake` enchaîne : `setup_infrastructure` → (`ingest_file_to_raw`,
 `ingest_api_to_raw`) → `raw_to_staging` → `staging_to_curated` → `validate_pipeline`.
 Il est planifié toutes les 15 min et déclenchable manuellement.
 
 **Récupérer le mot de passe admin** (généré au démarrage) :
+
 ```bash
 docker compose exec airflow cat /opt/airflow/standalone_admin_password.txt
 ```
 
 **Via l'interface web** : ouvrir http://localhost:8080 (login `admin` + mot de passe
+
 ci-dessus), activer le DAG `smart_mobility_data_lake`, puis le déclencher (▶).
 
 **Via la CLI** (utile si l'UI ne démarre pas faute de RAM — voir §11) :
+
 ```bash
 # déclencher le run complet
 docker compose exec airflow airflow dags trigger smart_mobility_data_lake
@@ -177,6 +195,7 @@ for t in setup_infrastructure ingest_api_to_raw ingest_file_to_raw \
   docker compose exec airflow airflow tasks test smart_mobility_data_lake $t $RID
 done
 ```
+
 La tâche `validate_pipeline` affiche un résumé des trois zones ; elle échoue si une zone est vide.
 
 ---
@@ -184,6 +203,7 @@ La tâche `validate_pipeline` affiche un résumé des trois zones ; elle échoue
 ## 6. API Gateway
 
 Lancer l'API (services Docker up, venv actif) :
+
 ```bash
 uvicorn src.api.main:app --reload --port 8000
 ```
@@ -200,6 +220,7 @@ Documentation interactive (Swagger) : **http://localhost:8000/docs**
 | `POST /ingest_fast` | ingestion optimisée par lots |
 
 Exemples :
+
 ```bash
 curl -s localhost:8000/health | python -m json.tool
 curl -s "localhost:8000/raw?source=velib&limit=5" | python -m json.tool
@@ -223,11 +244,13 @@ Ils font le **même travail logique** ; seule la stratégie d'I/O diffère :
 | Features | record par record | en lot + anomalie sur le batch |
 
 Test manuel :
+
 ```bash
 curl -s -X POST localhost:8000/ingest \
   -H "Content-Type: application/json" \
   -d '{"source":"manual","data":[{"station_id":"test1","num_bikes_available":5,"num_docks_available":10,"num_ebikes_available":2,"capacity":15,"lat":48.85,"lon":2.35}]}'
 ```
+
 Réponse : `{"status":"ok","records_processed":1,"duration_ms":...,"mode":"standard"}`.
 
 ---
@@ -235,9 +258,11 @@ Réponse : `{"status":"ok","records_processed":1,"duration_ms":...,"mode":"stand
 ## 8. Benchmark de performance
 
 Prérequis : l'API tourne et les services Docker sont up.
+
 ```bash
 python scripts/benchmark_ingest.py --runs 5
 ```
+
 Le script génère des batchs de 1 et 100 stations, appelle chaque endpoint (1 warm-up +
 N mesures), moyenne la durée mesurée **côté serveur** (le temps réel du pipeline), et écrit
 `reports/performance_results.json` + `reports/performance_report.md`.
@@ -257,16 +282,19 @@ obtenir les vôtres.
 ---
 
 ## 9. Tests
+
 ```bash
 uv pip install -e ".[dev]"    # pytest + httpx
 pytest -v
 ```
+
 18 tests unitaires couvrant les features métier, le scoring d'anomalie, les schémas Pydantic et
 la forme de l'API. Ils s'exécutent **sans Docker** (aucun service requis).
 
 ---
 
 ## 10. Récapitulatif des commandes
+
 ```bash
 # --- setup ---
 uv venv && source .venv/bin/activate && uv sync
@@ -302,6 +330,7 @@ puis lancer depuis la racine avec `python scripts/...`.
 
 **MySQL `Access denied for user 'root'@'localhost'` (erreur 1698 / 28000)**
 Un MySQL installé localement intercepte la connexion via le socket Unix. Corrigez :
+
 - `MYSQL_HOST=127.0.0.1` dans `.env` (force TCP) ;
 - si un MySQL système occupe déjà `127.0.0.1:3306` (`sudo ss -ltnp | grep 3306`), arrêtez-le
   (`sudo systemctl stop mysql`) **ou** remappez le conteneur (`"3307:3306"` dans le compose) et
@@ -327,6 +356,7 @@ scheduler et le webserver ne sont pas nécessaires pour exécuter et prouver le 
 ## 12. Choix techniques, limites et améliorations
 
 **Choix techniques**
+
 - Zones raw/staging/curated alignées sur les TP (reconnaissables par l'évaluateur).
 - Idempotence : `INSERT IGNORE` (MySQL) et upsert sur `(station_id, timestamp)` (MongoDB).
 - Météo traitée comme **contexte global** de la ville greffé à toutes les stations d'un
@@ -335,6 +365,7 @@ scheduler et le webserver ne sont pas nécessaires pour exécuter et prouver le 
   LocalStack qui ne persiste pas).
 
 **Limites**
+
 - `top5_emptiest/fullest` de `/stats` trie sur toute la collection curated (correct tant qu'un
   seul snapshot est présent).
 - Le pipeline transforme le **dernier** snapshot ; l'historisation complète nécessiterait de
@@ -342,6 +373,7 @@ scheduler et le webserver ne sont pas nécessaires pour exécuter et prouver le 
 - Interface Airflow dépendante de la RAM allouée (contournable en CLI).
 
 **Améliorations possibles**
+
 - Remote DVC durable (S3 réel) pour un `dvc pull` reproductible hors LocalStack.
 - Indexation géospatiale (Uber H3) pour l'analyse spatiale.
 - Modèle prédictif de saturation de station (au-delà de la détection d'anomalie).
