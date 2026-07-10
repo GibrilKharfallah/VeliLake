@@ -15,7 +15,6 @@ venv/
 # Donnees (ne pas versionner les datasets lourds ni les sorties)
 data/raw_files/*.csv
 data/**/*.parquet
-reports/performance_results.json
 
 # Airflow
 dags/__pycache__/
