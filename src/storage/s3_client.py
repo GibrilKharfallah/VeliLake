@@ -110,15 +110,21 @@ def list_objects(prefix: str = "", limit: int = 100,
     bucket = bucket or settings.s3_bucket_raw
     paginator = get_s3_client().get_paginator("list_objects_v2")
     out: list[dict] = []
-    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-        for obj in page.get("Contents", []):
-            out.append({
-                "key": obj["Key"],
-                "size": obj["Size"],
-                "last_modified": obj["LastModified"].isoformat(),
-            })
-            if len(out) >= limit:
-                return out
+    try:
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                out.append({
+                    "key": obj["Key"],
+                    "size": obj["Size"],
+                    "last_modified": obj["LastModified"].isoformat(),
+                })
+                if len(out) >= limit:
+                    return out
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] in ("NoSuchBucket", "404"):
+            logger.warning("Bucket '%s' inexistant, liste vide", bucket)
+            return []
+        raise
     return out
 
 
@@ -143,8 +149,14 @@ def count_objects(prefix: str = "", bucket: str | None = None) -> int:
     bucket = bucket or settings.s3_bucket_raw
     paginator = get_s3_client().get_paginator("list_objects_v2")
     total = 0
-    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-        total += page.get("KeyCount", 0)
+    try:
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            total += page.get("KeyCount", 0)
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] in ("NoSuchBucket", "404"):
+            logger.warning("Bucket '%s' inexistant, count=0", bucket)
+            return 0
+        raise
     return total
 
 
