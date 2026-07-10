@@ -51,6 +51,51 @@ services:
       timeout: 5s
       retries: 5
 
+  airflow:
+    image: apache/airflow:2.11.1
+    container_name: dl_airflow
+    depends_on:
+      mysql:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      localstack:
+        condition: service_started
+    environment:
+      - AIRFLOW__WEBSERVER__WORKERS=2
+      - AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT=300
+      - AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT=300
+      
+      - AIRFLOW__CORE__LOAD_EXAMPLES=false
+      # deps du projet installees au demarrage du conteneur (non pinnees :
+      # pip resout une combinaison compatible avec Airflow ; le code du projet
+      # tolere pandas 1.x/2.x/3.x)
+      - _PIP_ADDITIONAL_REQUIREMENTS=boto3 mysql-connector-python pymongo pandas scikit-learn requests tenacity pydantic pydantic-settings
+      - PYTHONPATH=/opt/project
+      # --- connexions vers les AUTRES conteneurs : noms de SERVICE + port INTERNE ---
+      # (à l'intérieur du réseau Docker, MySQL écoute sur 3306, PAS sur ton 3307 hôte)
+      - S3_ENDPOINT_URL=http://localstack:4566
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=eu-west-3
+      - S3_BUCKET_RAW=raw
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=root
+      - MYSQL_DATABASE=staging
+      - MONGO_URI=mongodb://mongodb:27017
+      - MONGO_DATABASE=curated
+      - MONGO_COLLECTION=station_analytics
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./src:/opt/project/src
+      - ./data:/opt/airflow/data      # pour que ingest_file trouve data/raw_files/hour.csv
+      - ./pyproject.toml:/opt/project/pyproject.toml
+    ports:
+      - "8080:8080"
+    command: standalone
+
 volumes:
   localstack_data:
   mysql_data:
