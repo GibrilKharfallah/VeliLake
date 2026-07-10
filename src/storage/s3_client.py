@@ -18,12 +18,14 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
+from functools import lru_cache 
+
 from src.config import settings
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-
+@lru_cache
 def get_s3_client():
     """Cree un client boto3 pointant vers LocalStack.
 
