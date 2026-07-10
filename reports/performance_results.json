@@ -1,0 +1,62 @@
+{
+  "generated_at": "2026-07-10T13:58:23.954106+00:00",
+  "machine": {
+    "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.35",
+    "python": "3.12.4",
+    "processor": "x86_64"
+  },
+  "methodology": "Batchs synthetiques generes localement. Chaque configuration : 1 warm-up non compte + 5 mesures. Metrique = duree serveur (duration_ms) = temps reel du pipeline raw->staging->curated, hors latence reseau client. Moyenne arithmetique.",
+  "runs_per_config": 5,
+  "results": {
+    "batch_1": {
+      "batch_size": 1,
+      "ingest": {
+        "mean_ms": 467.07,
+        "runs_ms": [
+          491.57,
+          637.32,
+          601.96,
+          367.15,
+          237.33
+        ]
+      },
+      "ingest_fast": {
+        "mean_ms": 197.29,
+        "runs_ms": [
+          228.22,
+          177.5,
+          173.03,
+          200.87,
+          206.83
+        ]
+      },
+      "speedup_x": 2.37,
+      "improvement_pct": 57.8
+    },
+    "batch_100": {
+      "batch_size": 100,
+      "ingest": {
+        "mean_ms": 12760.12,
+        "runs_ms": [
+          36786.05,
+          7351.17,
+          7337.97,
+          5351.05,
+          6974.35
+        ]
+      },
+      "ingest_fast": {
+        "mean_ms": 915.37,
+        "runs_ms": [
+          920.79,
+          652.92,
+          919.46,
+          698.98,
+          1384.68
+        ]
+      },
+      "speedup_x": 13.94,
+      "improvement_pct": 92.8
+    }
+  }
+}
