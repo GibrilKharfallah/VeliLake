@@ -1,6 +1,6 @@
 # Rapport de performance — /ingest vs /ingest_fast
 
-Genere le 2026-07-10T13:58:23.954106+00:00
+Genere le 2026-07-10T17:24:53.882812+00:00
 
 ## Machine
 - Plateforme : `Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.35`
@@ -14,8 +14,8 @@ Batchs synthetiques generes localement. Chaque configuration : 1 warm-up non com
 
 | Batch | /ingest (ms) | /ingest_fast (ms) | Speedup | Amelioration |
 |------:|-------------:|------------------:|--------:|-------------:|
-| 1 | 467.07 | 197.29 | x2.37 | +57.8% |
-| 100 | 12760.12 | 915.37 | x13.94 | +92.8% |
+| 1 | 420.67 | 239.06 | x1.76 | +43.2% |
+| 100 | 4837.01 | 791.72 | x6.11 | +83.6% |
 
 ## Explication technique des optimisations
 
