@@ -4,261 +4,202 @@
 
 Projet final — EFREI *Data Lakes & Data Integration* (2025-2026).
 
-VeliLake ingère des données de mobilité urbaine autour du vélo partagé, les fait
-transiter par trois zones (brute → intermédiaire → enrichie), et les expose via
-une API REST. Trois sources sont combinées :
+VeliLake ingère des données de mobilité urbaine, les fait transiter par trois zones
+(brute → intermédiaire → enrichie), et les expose via une API REST, le tout orchestré
+par Airflow. Trois sources sont combinées :
 
-- **Vélib Métropole (API GBFS)** — disponibilité temps réel des ~1 450 stations parisiennes ;
+- **Vélib Métropole (API GBFS)** — disponibilité temps réel des ~1 500 stations parisiennes ;
 - **UCI Bike Sharing Dataset (fichier CSV)** — historique horaire de location (Washington D.C., 2011-2012) ;
 - **Open-Meteo (API)** — météo courante de Paris, pour enrichir les snapshots.
 
-> Nom de package : `smart-mobility-data-lake`. Nom d'affichage : **VeliLake**.
+> Nom de package Python : `smart-mobility-data-lake`. Nom d'affichage : **VeliLake**.
 
 ---
 
-## Architecture
+## 1. Architecture
 
 | Zone | Rôle | Techno |
 |------|------|--------|
-| **Raw** | copie fidèle des données sources, sans transformation | **S3** (LocalStack) |
+| **Raw** | copie fidèle des sources, sans transformation | **S3** (LocalStack) |
 | **Staging** | données nettoyées, typées, requêtables en SQL | **MySQL** |
 | **Curated** | documents enrichis (features métier, météo, anomalies) | **MongoDB** |
-| **Orchestration** | planification des pipelines | **Airflow** *(à venir)* |
+| **Orchestration** | planification du pipeline | **Airflow** |
 | **API Gateway** | exposition REST des trois zones | **FastAPI** |
 
 Flux : `sources → raw (S3) → staging (MySQL) → curated (MongoDB) → API`.
+La zone raw en S3 respecte la contrainte du sujet (raw en S3 ou Elasticsearch).
 
-La contrainte du sujet (zone raw en S3 ou Elasticsearch) est respectée avec S3/LocalStack.
-
----
-
-## Prérequis
-
-- **Docker** + **Docker Compose** (services de données)
-- **[uv](https://docs.astral.sh/uv/)** (gestion d'environnement et de dépendances Python)
-- **Python ≥ 3.10** (le projet est développé/testé en 3.12)
+**Détection d'anomalie** : un `IsolationForest` (scikit-learn) score chaque station par
+rapport à l'ensemble du réseau à l'instant t ; repli sur un z-score si le batch est trop petit.
 
 ---
 
-## Structure du projet (état actuel)
+## 2. Prérequis
 
-```bash
+- **Docker** + **Docker Compose v2** (≥ 4 Go alloués à Docker, idéalement 8 Go pour Airflow)
+- **[uv](https://docs.astral.sh/uv/)** (environnement et dépendances Python)
+- **Python ≥ 3.10** (développé/testé en 3.12)
+
+> **Sous Windows/WSL2** : allouez de la RAM à WSL2 via `C:\Users\<user>\.wslconfig`
+> (`[wsl2]` puis `memory=8GB`), puis `wsl --shutdown`. Airflow est gourmand ; sans ça
+> son interface web peut ne pas démarrer (voir §11 Dépannage).
+
+---
+
+## 3. Structure du projet
+
+```
 VeliLake/
-├── docker-compose.yml          # LocalStack + MySQL + MongoDB (+ Airflow/API à venir)
+├── docker-compose.yml          # LocalStack + MySQL + MongoDB + Airflow
 ├── pyproject.toml              # dépendances + packaging (uv)
 ├── uv.lock                     # versions verrouillées (reproductibilité)
-├── .env.example                # gabarit de configuration (à copier en .env)
-├── .gitignore
+├── .env.example                # gabarit de configuration
 ├── src/
-│   ├── config.py               # config centrale (pydantic-settings) — source unique de vérité
-│   ├── storage/
-│   │   ├── s3_client.py         # zone raw : lecture/écriture/liste d'objets S3
-│   │   ├── mysql_client.py      # zone staging : schéma, insert batch, lectures sécurisées
-│   │   └── mongo_client.py      # zone curated : upsert idempotent, index, agrégations
-│   ├── ingestion/
-│   │   ├── run_tracker.py       # trace chaque run dans la table ingestion_runs
-│   │   ├── ingest_file.py       # CSV UCI → S3 raw
-│   │   ├── ingest_velib_api.py  # GBFS Vélib → S3 raw
-│   │   └── ingest_weather_api.py# Open-Meteo → S3 raw
-│   ├── transformation/
-│   │   ├── raw_to_staging.py    # S3 → MySQL (nettoyage, jointure, typage)
-│   │   ├── features.py          # features métier (fonctions pures)
-│   │   ├── anomaly_detection.py # score d'anomalie (IsolationForest + fallback)
-│   │   └── staging_to_curated.py# MySQL → MongoDB (enrichissement + upsert)
-│   ├── api/
-│   │   ├── main.py              # app FastAPI, montage des routers
-│   │   ├── schemas.py           # modèles Pydantic
-│   │   ├── routes_health.py     # GET /health
-│   │   ├── routes_raw.py        # GET /raw
-│   │   ├── routes_staging.py    # GET /staging
-│   │   ├── routes_curated.py    # GET /curated
-│   │   └── routes_stats.py      # GET /stats
-│   └── utils/
-│       ├── logging.py           # logger unifié
-│       ├── timing.py            # chronométrage (Timer, measure)
-│       ├── time_utils.py        # helpers datetime UTC
-│       └── http.py              # client HTTP resilient (retry tenacity)
+│   ├── config.py               # config centrale (pydantic-settings)
+│   ├── storage/                # clients S3 / MySQL / MongoDB
+│   ├── ingestion/              # ingestion fichier + APIs -> raw
+│   ├── transformation/         # raw->staging, staging->curated, features, anomalies
+│   ├── api/                    # FastAPI : main + routes + ingest_service + schemas
+│   └── utils/                  # logging, timing, http (retry), time_utils
+├── dags/
+│   └── smart_mobility_data_lake.py   # DAG Airflow orchestrant tout le pipeline
 ├── scripts/
-│   ├── setup_buckets.py         # crée les buckets S3
-│   ├── init_mysql.py            # crée le schéma MySQL + index MongoDB
-│   └── run_ingestion_once.py    # lance les 3 ingestions vers raw
-└── data/
-    └── raw_files/               # hour.csv / day.csv (dataset UCI, non versionné en git)
+│   ├── setup_buckets.py        # crée les buckets S3
+│   ├── init_mysql.py           # crée le schéma MySQL + index MongoDB
+│   ├── run_ingestion_once.py   # lance les 3 ingestions vers raw
+│   └── benchmark_ingest.py     # benchmark /ingest vs /ingest_fast
+├── tests/                      # tests pytest (features, schemas, health)
+├── reports/                    # rapports de performance (générés)
+└── data/raw_files/             # hour.csv / day.csv (dataset UCI, non versionné en git)
 ```
 
 ---
 
-## Installation & lancement pas à pas
+## 4. Installation pas à pas
 
-### 1. Cloner le dépôt
-
+### 4.1 Cloner le dépôt
 ```bash
 git clone https://github.com/<votre-utilisateur>/VeliLake.git
 cd VeliLake
 ```
 
-### 2. Environnement Python (uv)
-
+### 4.2 Environnement Python (uv)
 ```bash
-uv venv                    # crée l'environnement virtuel .venv
-source .venv/bin/activate  # active l'environnement (prompt : (VeliLake))
-uv sync                    # installe TOUTES les dépendances depuis uv.lock
+uv venv                      # crée l'environnement virtuel .venv
+source .venv/bin/activate    # active (prompt : (VeliLake))
+uv sync                      # installe TOUTES les dépendances depuis uv.lock
 ```
+`uv sync` installe exactement les versions verrouillées (reproductible à l'identique).
+Le package `src` est installé en éditable : lancez toujours les scripts **depuis la racine**
+avec `python scripts/...`.
 
-- `uv venv` crée un environnement isolé dans `.venv/`.
-- `uv sync` installe exactement les versions verrouillées dans `uv.lock` (reproductible à l'identique).
-- Le projet est installé en mode éditable : le package `src` est importable partout
-  (`from src.config import settings`). C'est pourquoi on lance toujours les scripts
-  **depuis la racine** avec `python scripts/...`, jamais `python3` hors venv.
-
-> Pour ajouter une dépendance plus tard : `uv add <paquet>` (met à jour `pyproject.toml`
-> **et** `uv.lock`). Réserve `uv pip install` au dépannage ponctuel — il ne met pas à jour
-> les fichiers du projet.
-
-### 3. Configuration (`.env`)
-
+### 4.3 Configuration (`.env`)
 ```bash
 cp .env.example .env
-sed -i 's/localhost/127.0.0.1/g' .env   # force TCP (voir Dépannage : erreur 1698)
+sed -i 's/localhost/127.0.0.1/g' .env    # force TCP (évite le socket MySQL local, cf §11)
 ```
+Le `.env.example` est déjà aligné sur le `docker-compose.yml` (identifiants `root`/`root`,
+base `staging`, bucket `raw`, credentials LocalStack `test`/`test`). Ces valeurs sont des
+identifiants **locaux de conteneurs**, pas des secrets. `.env` est ignoré par git.
 
-Le `.env.example` est déjà calé sur le `docker-compose.yml` (identifiants `root`/`root`,
-base `staging`, bucket `raw`, credentials LocalStack `test`/`test`). Ces valeurs ne sont
-pas des secrets : ce sont des identifiants locaux de conteneurs. `.env` est ignoré par git.
-
-### 4. Lancer les services Docker
-
+### 4.4 Lancer les services Docker
 ```bash
-docker compose up -d       # démarre LocalStack (S3), MySQL, MongoDB en arrière-plan
-docker ps                  # vérifie que les 3 conteneurs sont "healthy"
+docker compose up -d                     # LocalStack, MySQL, MongoDB, Airflow
+docker ps                                # les conteneurs doivent être "healthy"
 ```
+- `dl_localstack` (4566) — S3 (zone raw)
+- `dl_mysql` (3306) — staging ; **~60 s** d'initialisation
+- `dl_mongodb` (27017) — curated
+- `dl_airflow` (8080) — orchestration ; **premier démarrage lent** (installe ses dépendances)
 
-- `localstack` (port 4566) simule S3 en local.
-- `mysql` (port 3306) — zone staging. **Peut prendre ~60 s** à s'initialiser.
-- `mongodb` (port 27017) — zone curated.
+> Pour ne démarrer que les bases de données (sans Airflow) : `docker compose up -d localstack mysql mongodb`.
 
-Attends que `dl_mysql` soit `healthy` avant l'étape suivante.
-
-### 5. Initialiser buckets et schéma
-
+### 4.5 Initialiser buckets et schéma
 ```bash
-python scripts/setup_buckets.py   # crée le bucket S3 "raw" dans LocalStack
+python scripts/setup_buckets.py   # crée le bucket S3 "raw"
 python scripts/init_mysql.py      # crée les 4 tables MySQL + les index MongoDB
 ```
+La sortie de `init_mysql.py` doit lister les 4 tables à **0 ligne**.
 
-- `setup_buckets.py` appelle `s3_client.ensure_bucket()` (idempotent).
-- `init_mysql.py` crée `bike_history`, `velib_station_status`, `weather_snapshots`,
-  `ingestion_runs` (via `mysql_client.init_schema()`) et les index MongoDB
-  (`mongo_client.ensure_indexes()`, dont l'index unique `station_id + timestamp`).
-  La sortie doit lister les 4 tables à **0 ligne**.
-
-### 6. (Optionnel) Dataset UCI + DVC
-
+### 4.6 (Optionnel) Dataset UCI + DVC
 Le pipeline fonctionne sans le CSV (les APIs suffisent), mais pour la source *fichier* :
-
 ```bash
 cd data/raw_files
 curl -L -o bike.zip "https://archive.ics.uci.edu/static/public/275/bike+sharing+dataset.zip"
-unzip bike.zip && rm bike.zip     # produit hour.csv, day.csv, Readme.txt
+unzip bike.zip && rm bike.zip     # -> hour.csv, day.csv, Readme.txt
 cd ../..
 ```
-
-**Versionnement du dataset avec DVC** (optionnel — le fichier est trop lourd pour git) :
-
+**Versionnement du dataset avec DVC** (optionnel) :
 ```bash
-uv tool install "dvc[s3]"                       # dvc comme outil CLI isolé (hors venv projet)
-dvc init
-dvc remote add -d localstack-s3 s3://dvc-store
-dvc remote modify localstack-s3 endpointurl http://127.0.0.1:4566
-dvc remote modify --local localstack-s3 access_key_id test
-dvc remote modify --local localstack-s3 secret_access_key test
-python scripts/setup_buckets.py                 # (crée aussi le bucket dvc-store si ajouté)
-dvc add data/raw_files/hour.csv data/raw_files/day.csv
-dvc push
-git add data/raw_files/*.dvc .dvc/config .dvcignore
-git commit -m "Track UCI bike-sharing dataset with DVC"
+uv tool install "dvc[s3]"
+dvc pull            # si le dépôt contient déjà les .dvc et un remote configuré
+```
+DVC ne versionne que le **fichier statique** UCI ; les zones staging/curated sont des bases
+de données (état non-fichier), gérées par Airflow. Choix assumé : un seul orchestrateur.
+
+---
+
+## 5. Exécuter le pipeline
+
+Deux voies équivalentes. **La voie B (Airflow) est celle demandée par le sujet** ; la voie A
+sert au développement et au débogage.
+
+### Voie A — manuelle (scripts)
+```bash
+python scripts/run_ingestion_once.py            # sources -> raw (S3)
+python -m src.transformation.raw_to_staging     # raw -> staging (MySQL)
+python -m src.transformation.staging_to_curated # staging -> curated (MongoDB)
 ```
 
-DVC versionne uniquement le **fichier statique** UCI. Les zones staging/curated étant des
-bases de données (état non-fichier), elles ne sont pas gérées par DVC ; l'orchestration est
-confiée à Airflow. C'est un choix assumé : un seul orchestrateur, DVC cantonné à sa force
-(le versionnement de fichiers).
+### Voie B — orchestrée (Airflow)
+Le DAG `smart_mobility_data_lake` enchaîne : `setup_infrastructure` → (`ingest_file_to_raw`,
+`ingest_api_to_raw`) → `raw_to_staging` → `staging_to_curated` → `validate_pipeline`.
+Il est planifié toutes les 15 min et déclenchable manuellement.
 
-### 7. Ingestion → zone Raw
-
+**Récupérer le mot de passe admin** (généré au démarrage) :
 ```bash
-python scripts/run_ingestion_once.py            # lance les 3 sources
-# options : --skip-file / --skip-velib / --skip-weather
+docker compose exec airflow cat /opt/airflow/standalone_admin_password.txt
 ```
 
-Ce script appelle les trois modules d'ingestion. Chaque source est isolée (l'échec de l'une
-n'arrête pas les autres) et écrit une ligne dans `ingestion_runs` :
+**Via l'interface web** : ouvrir http://localhost:8080 (login `admin` + mot de passe
+ci-dessus), activer le DAG `smart_mobility_data_lake`, puis le déclencher (▶).
 
-- `ingest_velib_api.py` → `raw/api/velib/<date>/velib_status_*.json` + `velib_information_*.json`
-- `ingest_weather_api.py` → `raw/api/weather/<date>/weather_snapshot_*.json`
-- `ingest_file.py` → `raw/file/bike_sharing/hour.csv` (si le CSV est présent)
-
-Vérifications :
-
+**Via la CLI** (utile si l'UI ne démarre pas faute de RAM — voir §11) :
 ```bash
-# objets bruts dans S3
-aws --endpoint-url=http://127.0.0.1:4566 s3 ls s3://raw/ --recursive
+# déclencher le run complet
+docker compose exec airflow airflow dags trigger smart_mobility_data_lake
 
-# traces d'ingestion
-docker exec -it dl_mysql mysql -uroot -proot staging \
-  -e "SELECT source, status, records_count, duration_ms FROM ingestion_runs ORDER BY id DESC LIMIT 5;"
+# exécuter tâche par tâche, immédiatement, sans scheduler (idéal démo)
+RID=$(date +manual__%Y-%m-%dT%H:%M:%S+00:00)
+docker compose exec airflow airflow dags trigger smart_mobility_data_lake -r $RID
+for t in setup_infrastructure ingest_api_to_raw ingest_file_to_raw \
+         raw_to_staging staging_to_curated validate_pipeline; do
+  docker compose exec airflow airflow tasks test smart_mobility_data_lake $t $RID
+done
 ```
+La tâche `validate_pipeline` affiche un résumé des trois zones ; elle échoue si une zone est vide.
 
-### 8. Transformation Raw → Staging
+---
 
-```bash
-python -m src.transformation.raw_to_staging
-```
+## 6. API Gateway
 
-Lit le dernier snapshot brut depuis S3, **extrait le champ imbriqué
-`num_bikes_available_types`** (nombre de vélos électriques), **joint** status × information
-Vélib par `station_id`, nettoie/type, et insère par batch dans MySQL (`INSERT IGNORE` pour
-l'idempotence). Charge aussi `hour.csv` dans `bike_history` (une seule fois).
-
-Vérification :
-
-```bash
-docker exec -it dl_mysql mysql -uroot -proot staging -e "
-SELECT 'velib' t, COUNT(*) n FROM velib_station_status
-UNION ALL SELECT 'weather', COUNT(*) FROM weather_snapshots
-UNION ALL SELECT 'bike', COUNT(*) FROM bike_history;"
-```
-
-### 9. Transformation Staging → Curated
-
-```bash
-python -m src.transformation.staging_to_curated
-```
-
-Calcule les **features métier** (taux d'occupation, ratio élec, taux de bornes, niveau de
-tension, criticité), greffe le **contexte météo global**, score les **anomalies**
-(IsolationForest sur tout le batch), et **upsert** les documents enrichis dans MongoDB.
-Rejouable sans doublon (upsert sur `station_id + timestamp`).
-
-Vérification :
-
-```bash
-docker exec -it dl_mongodb mongosh --quiet --eval '
-  const c = db.getSiblingDB("curated").station_analytics;
-  print("documents:", c.countDocuments());
-  print("critiques:", c.countDocuments({"analytics.is_critical": true}));'
-```
-
-### 10. API Gateway
-
+Lancer l'API (services Docker up, venv actif) :
 ```bash
 uvicorn src.api.main:app --reload --port 8000
 ```
-
 Documentation interactive (Swagger) : **http://localhost:8000/docs**
 
-Exemples :
+| Endpoint | Rôle |
+|----------|------|
+| `GET /health` | état de l'API + connectivité S3 / MySQL / MongoDB |
+| `GET /raw` | objets de la zone brute (`source`, `prefix`, `limit`, `preview`) |
+| `GET /staging` | lignes MySQL (whitelist de tables ; `station_id`, `source`, `limit`) |
+| `GET /curated` | documents enrichis (`station_id`, `tension_level`, `is_critical`, `limit`) |
+| `GET /stats` | volumes par zone + indicateurs Vélib |
+| `POST /ingest` | ingestion record par record (baseline) |
+| `POST /ingest_fast` | ingestion optimisée par lots |
 
+Exemples :
 ```bash
 curl -s localhost:8000/health | python -m json.tool
 curl -s "localhost:8000/raw?source=velib&limit=5" | python -m json.tool
@@ -267,18 +208,65 @@ curl -s "localhost:8000/curated?is_critical=true&limit=3" | python -m json.tool
 curl -s localhost:8000/stats | python -m json.tool
 ```
 
-| Endpoint | Rôle |
-|----------|------|
-| `GET /health` | état de l'API + connectivité S3 / MySQL / MongoDB |
-| `GET /raw` | objets de la zone brute (filtres `source`, `prefix`, `limit`, `preview`) |
-| `GET /staging` | lignes MySQL (whitelist de tables, filtres `station_id`, `source`) |
-| `GET /curated` | documents enrichis (filtres `station_id`, `tension_level`, `is_critical`) |
-| `GET /stats` | volumes par zone + indicateurs Vélib (occupation, top vides/pleines, critiques) |
+---
+
+## 7. Endpoints avancés `/ingest` vs `/ingest_fast`
+
+Les deux acceptent le même payload et propagent un batch de stations dans les trois zones.
+Ils font le **même travail logique** ; seule la stratégie d'I/O diffère :
+
+| | `/ingest` (standard) | `/ingest_fast` (optimisé) |
+|---|---|---|
+| S3 (raw) | 1 objet **par record** | 1 objet **pour tout le batch** |
+| MySQL (staging) | `INSERT` + `commit` par record | 1 `executemany` + 1 `commit` |
+| MongoDB (curated) | `replace_one` par record | 1 `bulk_write` |
+| Features | record par record | en lot + anomalie sur le batch |
+
+Test manuel :
+```bash
+curl -s -X POST localhost:8000/ingest \
+  -H "Content-Type: application/json" \
+  -d '{"source":"manual","data":[{"station_id":"test1","num_bikes_available":5,"num_docks_available":10,"num_ebikes_available":2,"capacity":15,"lat":48.85,"lon":2.35}]}'
+```
+Réponse : `{"status":"ok","records_processed":1,"duration_ms":...,"mode":"standard"}`.
 
 ---
 
-## Récapitulatif des commandes
+## 8. Benchmark de performance
 
+Prérequis : l'API tourne et les services Docker sont up.
+```bash
+python scripts/benchmark_ingest.py --runs 5
+```
+Le script génère des batchs de 1 et 100 stations, appelle chaque endpoint (1 warm-up +
+N mesures), moyenne la durée mesurée **côté serveur** (le temps réel du pipeline), et écrit
+`reports/performance_results.json` + `reports/performance_report.md`.
+
+**Résultats obtenus sur la machine de développement** (WSL2, LocalStack local) :
+
+| Batch | `/ingest` | `/ingest_fast` | Speedup | Amélioration |
+|------:|----------:|---------------:|--------:|-------------:|
+| 1 | ~467 ms | ~197 ms | ×2.37 | +57.8 % |
+| 100 | ~12 760 ms | ~915 ms | ×13.94 | **+92.8 %** |
+
+L'exigence du sujet (≥ 30 % plus rapide sur un batch de 100) est largement satisfaite. Le gain
+vient de la réduction des aller-retours réseau/disque (100 commits MySQL → 1, 100 écritures
+Mongo → 1, 100 objets S3 → 1). Les chiffres dépendent de la machine ; relancez le script pour
+obtenir les vôtres.
+
+---
+
+## 9. Tests
+```bash
+uv pip install -e ".[dev]"    # pytest + httpx
+pytest -v
+```
+18 tests unitaires couvrant les features métier, le scoring d'anomalie, les schémas Pydantic et
+la forme de l'API. Ils s'exécutent **sans Docker** (aucun service requis).
+
+---
+
+## 10. Récapitulatif des commandes
 ```bash
 # --- setup ---
 uv venv && source .venv/bin/activate && uv sync
@@ -287,46 +275,73 @@ docker compose up -d
 python scripts/setup_buckets.py
 python scripts/init_mysql.py
 
-# --- pipeline complet (manuel) ---
+# --- pipeline (voie manuelle) ---
 python scripts/run_ingestion_once.py
 python -m src.transformation.raw_to_staging
 python -m src.transformation.staging_to_curated
 
-# --- API ---
+# --- pipeline (voie Airflow) ---
+docker compose exec airflow airflow dags trigger smart_mobility_data_lake
+
+# --- API + benchmark + tests ---
 uvicorn src.api.main:app --reload --port 8000
+python scripts/benchmark_ingest.py --runs 5
+pytest -v
 ```
 
 ---
 
-## Dépannage
+## 11. Dépannage
 
 **`docker compose up` → "cannot connect to the Docker daemon"**
-Le daemon Docker n'est pas lancé. Démarre Docker Desktop (macOS/Windows/WSL2), ou
-`sudo systemctl start docker` (Linux). Vérifie avec `docker ps`.
+Démarrer Docker Desktop (macOS/Windows/WSL2) ou `sudo systemctl start docker` (Linux).
 
 **`ModuleNotFoundError: No module named 'src'`**
-Le projet n'est pas installé en éditable ou le venv n'est pas actif.
-`source .venv/bin/activate && uv sync`, puis lance depuis la racine avec `python scripts/...`.
+Venv inactif ou projet non installé en éditable : `source .venv/bin/activate && uv sync`,
+puis lancer depuis la racine avec `python scripts/...`.
 
 **MySQL `Access denied for user 'root'@'localhost'` (erreur 1698 / 28000)**
-Erreur `auth_socket` : la connexion tombe sur un MySQL **installé localement** (via le socket
-Unix) au lieu du conteneur. Deux correctifs :
-
-- mettre `MYSQL_HOST=127.0.0.1` dans `.env` (force TCP) ;
-- si un MySQL système occupe déjà `127.0.0.1:3306` (`sudo ss -ltnp | grep 3306`), soit
-  l'arrêter (`sudo systemctl stop mysql && sudo systemctl disable mysql`), soit remapper le
-  conteneur sur un autre port dans `docker-compose.yml` (`"3307:3306"`) et poser
-  `MYSQL_PORT=3307` dans `.env`.
+Un MySQL installé localement intercepte la connexion via le socket Unix. Corrigez :
+- `MYSQL_HOST=127.0.0.1` dans `.env` (force TCP) ;
+- si un MySQL système occupe déjà `127.0.0.1:3306` (`sudo ss -ltnp | grep 3306`), arrêtez-le
+  (`sudo systemctl stop mysql`) **ou** remappez le conteneur (`"3307:3306"` dans le compose) et
+  posez `MYSQL_PORT=3307` dans `.env` (uniquement en local ; laissez 3306 dans `.env.example`).
 
 **`ImportError: cannot import name 'DocumentModifiedShape' from 'botocore...'`**
-Versions boto3/botocore désynchronisées.
-`uv pip install --force-reinstall "boto3>=1.34" "botocore>=1.34"`, puis vérifie qu'elles
-partagent la même série de version. Si un botocore de conda `base` interfère, `conda deactivate`.
+boto3/botocore désynchronisés : `uv pip install --force-reinstall "boto3>=1.34" "botocore>=1.34"`.
+
+**`/raw` ou `/stats` renvoient une erreur / le bucket a disparu**
+LocalStack communautaire ne persiste pas S3 au redémarrage. Recréez et réingérez :
+`python scripts/setup_buckets.py && python scripts/run_ingestion_once.py`. L'API recrée aussi
+le bucket à son démarrage.
+
+**L'interface Airflow (`:8080`) ne démarre pas / se ferme**
+Manque de RAM (fréquent sous WSL2) : le webserver est tué (`No response from gunicorn master`).
+Allouez 8 Go à WSL2 (`.wslconfig`), et/ou ajoutez au service `airflow` du compose :
+`AIRFLOW__WEBSERVER__WORKERS=2` et `AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT=300`.
+**Alternative sans UI** : pilotez le DAG en CLI (`airflow tasks test ...`, cf §5 voie B) — le
+scheduler et le webserver ne sont pas nécessaires pour exécuter et prouver le pipeline.
 
 ---
 
-## À venir (roadmap)
+## 12. Choix techniques, limites et améliorations
 
-- Endpoints avancés `POST /ingest` et `POST /ingest_fast` (+ benchmark de performance).
-- DAG Airflow `smart_mobility_data_lake` orchestrant l'ensemble du pipeline.
-- Tests `pytest` et checklist de conformité aux exigences du sujet.
+**Choix techniques**
+- Zones raw/staging/curated alignées sur les TP (reconnaissables par l'évaluateur).
+- Idempotence : `INSERT IGNORE` (MySQL) et upsert sur `(station_id, timestamp)` (MongoDB).
+- Météo traitée comme **contexte global** de la ville greffé à toutes les stations d'un
+  snapshot (pas une jointure par station) — assumé et documenté.
+- La zone raw est considérée **réingérable** depuis les sources live (cohérent avec
+  LocalStack qui ne persiste pas).
+
+**Limites**
+- `top5_emptiest/fullest` de `/stats` trie sur toute la collection curated (correct tant qu'un
+  seul snapshot est présent).
+- Le pipeline transforme le **dernier** snapshot ; l'historisation complète nécessiterait de
+  boucler sur les timestamps.
+- Interface Airflow dépendante de la RAM allouée (contournable en CLI).
+
+**Améliorations possibles**
+- Remote DVC durable (S3 réel) pour un `dvc pull` reproductible hors LocalStack.
+- Indexation géospatiale (Uber H3) pour l'analyse spatiale.
+- Modèle prédictif de saturation de station (au-delà de la détection d'anomalie).
